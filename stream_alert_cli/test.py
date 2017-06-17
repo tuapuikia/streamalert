@@ -408,7 +408,7 @@ class AlertProcessorTester(object):
         for alert in alerts:
             outputs = alert['metadata'].get('outputs', [])
             self.setup_outputs(outputs, url_mock)
-            event = {'Records': [{'Sns': {'Message': json.dumps({'default': alert})}}]}
+            event = json.dumps(alert)
             context = Mock()
             context.invoked_function_arn = (
                 'arn:aws:lambda:us-east-1:0123456789012:'
