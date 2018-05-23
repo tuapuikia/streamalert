@@ -4,16 +4,14 @@ Clusters
 Background
 ~~~~~~~~~~
 
-StreamAlert will deploy separate infrastructure for each ``cluster`` (or environment) you define.
+StreamAlert can deploy separate infrastructure for each ``cluster`` (or environment) you define.
 
 What constitutes a ``cluster`` is up to you.
 
-Example: You could define ``IT``, ``PCI`` and ``Production`` clusters.
+Example: You could define ``IT``, ``PCI`` or ``Production`` clusters.
 
 Strategy
 --------
-
-Cluster definition is up to you.
 
 Common patterns:
 
@@ -21,23 +19,47 @@ Common patterns:
 2. Define a cluster for each of your environments
 3. Define a cluster for each organization, which may have one or more environments
 
-Which one you choose is largely dependent on your processes, requirements and how your team organizes itself
+Which one you choose is largely dependent on your processes, requirements and how your team organizes itself.
 
-Option \(2\) is encouraged because it provides segmentation for ingestion, analysis and storage, on a per-cluster basis, ensuring that folks only have access to the infrastructure and data they need to get their job done.
+Option \(2\) is encouraged because it provides segmentation for ingestion and analysis, which allows for the best possible performance during processing.
 
 Configuration
 -------------
 
-Each cluster lives in its own ``json`` file in the ``conf/clusters`` directory.
+Each cluster file lives in its own ``JSON`` file in the ``conf/clusters`` directory, and contains a name, region, modules, and Terraform variable outputs.
 
-A cluster file contains name, region, modules, and outputs.
+Examples
+~~~~~~~~
 
-An example ``production`` cluster::
+Kinesis Cluster
+---------------
+
+Contains the following:
+
+- Rule and Alert Processor Lambda Functions
+- Kinesis Stream with 1 Shard
+- Kinesis Events to the Rule Processor
+- CloudWatch Monitoring Alarms for Kinesis and Lambda
+- Outputs to display the Kinesis username, access key, and secret key
+
+.. code-block:: json
 
   {
-    "id": "production",
-    "region": "us-west-2",
+    "id": "kinesis-example",
     "modules": {
+      "cloudwatch_monitoring": {
+        "enabled": true
+      },
+      "kinesis": {
+        "streams": {
+          "create_user": true,
+          "shards": 1,
+          "retention": 24
+        }
+      },
+      "kinesis_events": {
+        "enabled": true
+      },
       "stream_alert": {
         "alert_processor": {
           "timeout": 25,
@@ -49,22 +71,6 @@ An example ``production`` cluster::
           "memory": 256,
           "current_version": "$LATEST"
         }
-      },
-      "cloudwatch_monitoring": {
-        "enabled": true
-      },
-      "kinesis": {
-        "streams": {
-          "shards": 1,
-          "retention": 24
-        },
-        "firehose": {
-          "enabled": true,
-          "s3_bucket_suffix": "streamalert.results"
-        }
-      },
-      "kinesis_events": {
-        "enabled": true
       }
     },
     "outputs": {
@@ -73,8 +79,59 @@ An example ``production`` cluster::
         "access_key_id",
         "secret_key"
       ]
-    }
+    },
+    "region": "us-west-2",
   }
+
+CloudTrail S3 Processing Cluster
+--------------------------------
+
+Contains the following:
+
+- Rule and Alert Processor Lambda Functions
+- CloudWatch Monitoring for Lambda
+- CloudTrail with Kinesis disabled
+- S3 Event Notifications setup on multiple S3 buckets
+
+.. code-block:: json
+
+  {
+    "id": "s3-example",
+    "modules": {
+      "cloudtrail": {
+        "enable_kinesis": false,
+        "enable_logging": true
+      },
+      "cloudwatch_monitoring": {
+        "enabled": true,
+        "kinesis_alarms_enabled": false
+      },
+      "s3_events": [
+        {
+          "bucket_id": "example.s3.streamalert.cloudtrail",
+          "enable_events": true
+        }
+      ],
+      "stream_alert": {
+        "alert_processor": {
+          "current_version": "$LATEST",
+          "enable_metrics": false,
+          "log_level": "info",
+          "memory": 128,
+          "timeout": 10
+        },
+        "rule_processor": {
+          "current_version": "$LATEST",
+          "enable_metrics": false,
+          "log_level": "info",
+          "memory": 128,
+          "timeout": 10
+        }
+      }
+    },
+    "region": "us-east-1"
+  }
+
 
 Customizing Clusters
 ~~~~~~~~~~~~~~~~~~~~
@@ -83,10 +140,12 @@ Each StreamAlert cluster is made up of multiple modules.
 
 Each module corresponds to a Terraform module found in the ``terraform/modules`` directory, and serves a specific purpose in a StreamAlert cluster.
 
-After making modifications to a cluster file, make sure you apply the changes with::
+After making modifications to a cluster file, make sure you apply the changes with:
 
-  $ python stream_alert_cli.py terraform build
-  
+.. code-block:: bash
+
+  $ python manage.py terraform build
+
 This will regenerate the necessary Terraform files and then apply the changes.
 
 Module: StreamAlert
@@ -116,10 +175,52 @@ If any of the services cross a predefined threshold, an alarm is generated.
 
 To disable CloudWatch alarms, set to ``false``.
 
-Template::
+**Template:**
 
-  "cloudwatch_monitoring": {
-    "enabled": true
+.. code-block:: json
+
+  {
+    "cloudwatch_monitoring": {
+      "enabled": true
+    }
+  }
+
+To configure the SNS topic used to receive CloudWatch metric alarms, use one of the following options in the ``conf/global.json`` configuration file.
+
+Option 1: Create a new topic.  This tells the StreamAlert CLI to create a new topic called ``stream_alert_monitoring``.  All clusters will send alarms to this topic.
+
+.. code-block:: json
+
+  {
+    "account": {
+      "...": "..."
+    },
+    "terraform": {
+      "...": "..."
+    },
+    "infrastructure": {
+      "monitoring": {
+        "create_sns_topic": true
+      }
+    }
+  }
+
+Option 2: Use an existing SNS topic within your AWS account (created outside of the scope of StreamAlert).
+
+.. code-block:: json
+
+  {
+    "account": {
+      "...": "..."
+    },
+    "terraform": {
+      "...": "..."
+    },
+    "infrastructure": {
+      "monitoring": {
+        "sns_topic_name": "my_sns_topic"
+      }
+    }
   }
 
 Module: Kinesis Events
@@ -131,10 +232,14 @@ By default, this connects the ``stream_alert`` module to the ``kinesis`` module.
 
 To disable this mapping, set to ``false``
 
-Template::
+**Template:**
 
-  "kinesis_events": {
-    "enabled": true
+.. code-block:: json
+
+  {
+    "kinesis_events": {
+      "enabled": true
+    }
   }
 
 Module: CloudTrail
@@ -148,24 +253,29 @@ When writing rules for CloudTrail data, use the ``cloudwatch:event`` log source.
 
 By default, all API calls will be logged and accessible from rules.
 
-**template**
+**Template:**
 
-.. code-block::
+.. code-block:: json
 
+  {
     "cloudtrail": {
-      "enabled": true
+      "enable_logging": true,
+      "enable_kinesis": true
     }
+  }
 
-**options**
+**Options:**
 
-=============        ========     =======                            ===========
-Key                  Required     Default                            Description
--------------        ---------    -------                            -----------
-``enabled``          Yes          -                                  To enable/disable the CloudTrail.
-``existing_trail``   No           ``false``                          Set to ``true`` if the account has an existing CloudTrail.  This is to avoid duplication of data collected by multiple CloudTrails.
-``is_global_trail``  No           ``true``                           If the CloudTrail should collect events from any region.
-``event_pattern``    No           ``{"account": ["<accound_id>"]}``  The CloudWatch Events pattern to send to Kinesis.  `More information <http://docs.aws.amazon.com/AmazonCloudWatch/latest/events/EventTypes.html>`_.
-=============        =========    =======                            ===========
+=====================    ========  ==================================  ===========
+Key                      Required  Default                             Description
+---------------------    --------  ----------------------------------  -----------
+``enable_logging``       ``Yes``                                       Enable/disable the CloudTrail logging.
+``enable_kinesis``       ``No``    ``true``                            Enable/disable the sending CloudTrail data to Kinesis.
+``existing_trail``       ``No``    ``false``                           Set to ``true`` if the account has an existing CloudTrail.  This is to avoid duplication of data collected by multiple CloudTrails.
+``is_global_trail``      ``No``    ``true``                            If the CloudTrail should collect events from any region.
+``event_pattern``        ``No``    ``{"account": ["<accound_id>"]}``   The CloudWatch Events pattern to send to Kinesis.  `More information <http://docs.aws.amazon.com/AmazonCloudWatch/latest/events/EventTypes.html>`_.
+``cross_account_ids``    ``No``                                        Account IDs to grant write access to the created CloudTrail S3 bucket
+=====================    ========  ==================================  ===========
 
 Module: Flow Logs
 -----------------
@@ -176,36 +286,72 @@ In the settings below, an arbitrary amount of subnets, vpcs, and enis can be ena
 
 When writing rules for this data, use the ``cloudwatch:flow_logs`` log source.
 
-**template**
+**Template:**
 
-.. code-block::
+.. code-block:: json
 
-  "flow_logs": {
-    "enabled": true,
-    "log_group_name": "<name-of-cloudwatch-log-group>",
-    "subnets": [
-      "subnet-id-1",
-      "..."
-    ],
-    "vpcs": [
-      "vpc-id-1",
-      "..."
-    ],
-    "enis": [
-      "eni-id-1",
-      "..."
+  {
+    "flow_logs": {
+      "enabled": true,
+      "log_group_name": "<name-of-cloudwatch-log-group>",
+      "subnets": [
+        "subnet-id-1",
+        "..."
+      ],
+      "vpcs": [
+        "vpc-id-1",
+        "..."
+      ],
+      "enis": [
+        "eni-id-1",
+        "..."
+      ]
+    }
+  }
+
+**Options:**
+
+==================  ========  ====================================  ===========
+Key                 Required  Default                               Description
+------------------  --------  ------------------------------------  -----------
+``enabled``         Yes                                             To enable/disable the Flow log creation.
+``log_group_name``  No        prefix_cluster_streamalert_flow_logs  The name of the CloudWatch Log group.
+``subnets``         No        None                                  The list of AWS VPC subnet IDs to collect flow logs from.
+``vpcs``            No        None                                  The list of AWS VPC IDs to collect flow logs from.
+``enis``            No        None                                  The list of AWS ENIs to collect flow logs from.
+==================  ========  ====================================  ===========
+
+Module: S3 Events
+-----------------
+
+Amazon S3 is one of the default datasources for StreamAlert.
+
+S3 Event Notifications can be configured to notify Lambda each time an object is written.
+
+When StreamAlert receives this notification, it fetches the object from S3 and analyzes it according to configured rules.
+
+**Template**
+
+.. code-block:: json
+
+  {
+    "s3_events": [
+      {
+        "bucket_id": "<bucket-id>"
+      },
+      {
+        "bucket_id": "<bucket-id-2>",
+        "enable_events": false
+      }
     ]
   }
 
-**options**
+**Options:**
 
-=============        ========     =======                              ===========
-Key                  Required     Default                              Description
--------------        ---------    -------                              -----------
-``enabled``          Yes          -                                    To enable/disable the Flow log creation.
-``log_group_name``   No           prefix_cluster_streamalert_flow_logs The name of the CloudWatch Log group.
-``subnets``          No           None                                 The list of AWS VPC subnet IDs to collect flow logs from.
-``vpcs``             No           None                                 The list of AWS VPC IDs to collect flow logs from.
-``enis``             No           None                                 The list of AWS ENIs to collect flow logs from.
-=============        =========    =======                            ===========
+==================  ========  =========  ===========
+Key                 Required  Default    Description
+------------------  --------  ---------  -----------
+``bucket_id``       Yes                  The S3 bucket to notify upon
+``enable_events``   No        Yes        Enable/disable the notification to Lambda
+==================  ========  =========  ===========
   

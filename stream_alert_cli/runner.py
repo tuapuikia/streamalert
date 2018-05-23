@@ -1,4 +1,4 @@
-'''
+"""
 Copyright 2017-present, Airbnb Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,28 +12,23 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-'''
-
-import os
-import shutil
-import sys
-
-from collections import namedtuple
-from getpass import getpass
-
-from stream_alert_cli.package import RuleProcessorPackage, AlertProcessorPackage
-from stream_alert_cli.test import stream_alert_test
-from stream_alert_cli import helpers
+"""
+from app_integrations.apps.app_base import StreamAlertApp
+from stream_alert.alert_processor.outputs.output_base import StreamAlertOutput
+from stream_alert_cli.apps import save_app_auth_info
+from stream_alert_cli.athena.handler import athena_handler
 from stream_alert_cli.config import CLIConfig
-from stream_alert_cli.logger import LOGGER_CLI
-from stream_alert_cli.version import LambdaVersion
-from stream_alert_cli.terraform_generate import terraform_generate
+from stream_alert_cli.helpers import user_input
+from stream_alert_cli.kinesis.handler import kinesis_handler
+from stream_alert_cli.logger import LOGGER_CLI, set_logger_levels
+from stream_alert_cli.manage_lambda.handler import lambda_handler
+from stream_alert_cli.rule_table import rule_table_handler
+from stream_alert_cli.terraform.handler import terraform_handler
+from stream_alert_cli.test import stream_alert_test
+from stream_alert_cli.threat_intel_downloader.handler import (
+    handler as threat_intel_downloader_handler
+)
 import stream_alert_cli.outputs as config_outputs
-
-from stream_alert.alert_processor import __version__ as alert_processor_version
-from stream_alert.alert_processor.outputs import get_output_dispatcher
-from stream_alert.rule_processor import __version__ as rule_processor_version
-
 
 CONFIG = CLIConfig()
 
@@ -48,419 +43,85 @@ def cli_runner(options):
             Contains the following keys for lambda commands:
                 (command, subcommand, env, func, source)
     """
-    cli_load_message = ('Issues? Report here: '
-                        'https://github.com/airbnb/streamalert/issues')
+    cli_load_message = 'Issues? Report here: https://github.com/airbnb/streamalert/issues'
     LOGGER_CLI.info(cli_load_message)
+
+    if options.debug:
+        set_logger_levels('DEBUG')
 
     if options.command == 'output':
         configure_output(options)
 
     elif options.command == 'lambda':
-        lambda_handler(options)
+        lambda_handler(options, CONFIG)
 
     elif options.command == 'live-test':
         stream_alert_test(options, CONFIG)
 
+    elif options.command == 'validate-schemas':
+        stream_alert_test(options, CONFIG)
+
     elif options.command == 'terraform':
-        terraform_handler(options)
+        terraform_handler(options, CONFIG)
 
+    elif options.command == 'configure':
+        configure_handler(options)
 
-def lambda_handler(options):
-    """Handle all Lambda CLI operations"""
+    elif options.command == 'athena':
+        athena_handler(options, CONFIG)
 
-    if options.subcommand == 'deploy':
-        # Make sure the Terraform code is up to date
-        if not terraform_generate(config=CONFIG):
-            return
-        deploy(options)
+    elif options.command == 'metrics':
+        _toggle_metrics(options)
 
-    elif options.subcommand == 'rollback':
-        # Make sure the Terraform code is up to date
-        if not terraform_generate(config=CONFIG):
-            return
-        rollback(options)
+    elif options.command == 'create-alarm':
+        _create_alarm(options)
 
-    elif options.subcommand == 'test':
-        stream_alert_test(options)
+    elif options.command == 'app':
+        _app_integration_handler(options)
 
+    elif options.command == 'kinesis':
+        kinesis_handler(options, CONFIG)
 
-def terraform_check():
-    """Verify that Terraform is configured correctly"""
-    prereqs_message = ('Terraform not found! Please install and add to '
-                       'your $PATH:\n'
-                       '\t$ export PATH=$PATH:/usr/local/terraform/bin')
-    return run_command(['terraform', 'version'],
-                       error_message=prereqs_message,
-                       quiet=True)
+    elif options.command == 'threat_intel':
+        _threat_intel_handler(options, CONFIG)
 
+    elif options.command == 'threat_intel_downloader':
+        threat_intel_downloader_handler(options, CONFIG)
 
-def terraform_handler(options):
-    """Handle all Terraform CLI operations"""
-    # verify terraform is installed
-    if not terraform_check():
-        return
-    # use a named tuple to match the 'processor' attribute in the argparse options
-    deploy_opts = namedtuple('DeployOptions', ['processor'])
+    elif options.command == 'rule-table':
+        rule_table_handler(options, CONFIG)
 
-    # plan/apply our streamalert infrastructure
-    if options.subcommand == 'build':
-        # Make sure the Terraform is completely up to date
-        if not terraform_generate(config=CONFIG):
-            return
-        # --target is for terraforming a specific streamalert module
-        if options.target:
-            target = options.target
-            targets = ['module.{}_{}'.format(target, cluster)
-                       for cluster in CONFIG.clusters()]
-            tf_runner(targets=targets)
-        else:
-            tf_runner()
 
-    # generate terraform files
-    elif options.subcommand == 'generate':
-        if not terraform_generate(config=CONFIG):
-            return
-
-    elif options.subcommand == 'init-backend':
-        run_command(['terraform', 'init'])
-
-    # initialize streamalert infrastructure from a blank state
-    elif options.subcommand == 'init':
-        LOGGER_CLI.info('Initializing StreamAlert')
-
-        # generate init Terraform files
-        if not terraform_generate(config=CONFIG, init=True):
-            return
-
-        LOGGER_CLI.info('Initializing Terraform')
-        if not run_command(['terraform', 'init']):
-            sys.exit(1)
-
-        # build init infrastructure
-        LOGGER_CLI.info('Building Initial Infrastructure')
-        init_targets = [
-            'aws_s3_bucket.lambda_source',
-            'aws_s3_bucket.logging_bucket',
-            'aws_s3_bucket.stream_alert_secrets',
-            'aws_s3_bucket.terraform_remote_state',
-            'aws_kms_key.stream_alert_secrets',
-            'aws_kms_alias.stream_alert_secrets'
-        ]
-        if not tf_runner(targets=init_targets):
-            LOGGER_CLI.error('An error occured while running StreamAlert init')
-            sys.exit(1)
-
-        # generate the main.tf with remote state enabled
-        LOGGER_CLI.info('Configuring Terraform Remote State')
-        if not terraform_generate(config=CONFIG):
-            return
-
-        if not run_command(['terraform', 'init']):
-            return
-
-        LOGGER_CLI.info('Deploying Lambda Functions')
-        # deploy both lambda functions
-        deploy(deploy_opts('all'))
-        # create all remainder infrastructure
-
-        LOGGER_CLI.info('Building Remainder Infrastructure')
-        tf_runner()
-
-    elif options.subcommand == 'clean':
-        terraform_clean()
-
-    elif options.subcommand == 'destroy':
-        if options.target:
-            target = options.target
-            targets = ['module.{}_{}'.format(target, cluster)
-                       for cluster in CONFIG.clusters()]
-            tf_runner(targets=targets, action='destroy')
-            return
-
-        # Migrate back to local state so Terraform can successfully
-        # destroy the S3 bucket used by the backend.
-        if not terraform_generate(config=CONFIG, init=True):
-            return
-
-        if not run_command(['terraform', 'init']):
-            return
-
-        # Destroy all of the infrastructure
-        if not tf_runner(action='destroy'):
-            return
-
-        # Remove old Terraform files
-        terraform_clean()
-
-    # get a quick status on our declared infrastructure
-    elif options.subcommand == 'status':
-        status()
-
-
-def terraform_clean():
-    """Remove leftover Terraform statefiles and main/cluster files"""
-    LOGGER_CLI.info('Cleaning Terraform files')
-
-    cleanup_files = ['{}.tf'.format(cluster) for cluster in CONFIG.clusters()]
-    cleanup_files.extend([
-        'main.tf',
-        'terraform.tfstate',
-        'terraform.tfstate.backup'
-    ])
-    for tf_file in cleanup_files:
-        file_to_remove = 'terraform/{}'.format(tf_file)
-        if not os.path.isfile(file_to_remove):
-            continue
-        os.remove(file_to_remove)
-
-    # Finally, delete the Terraform directory
-    if os.path.isdir('terraform/.terraform/'):
-        shutil.rmtree('terraform/.terraform/')
-
-
-def run_command(args=None, **kwargs):
-    """Alias to CLI Helpers.run_command"""
-    return helpers.run_command(args, **kwargs)
-
-
-def continue_prompt():
-    """Continue prompt used before applying Terraform plans"""
-    required_responses = {'yes', 'no'}
-    response = ''
-    while response not in required_responses:
-        response = raw_input('\nWould you like to continue? (yes or no): ')
-    if response == 'no':
-        sys.exit(0)
-
-
-def tf_runner(**kwargs):
-    """Terraform wrapper to build StreamAlert infrastructure.
-
-    Steps:
-        - resolve modules with `terraform get`
-        - run `terraform plan` for the given targets
-        - if plan is successful and user confirms prompt,
-          then the infrastructure is applied.
-
-    kwargs:
-        targets: a list of Terraform targets
-        action: 'apply' or 'destroy'
-
-    Returns: Boolean result of if the terraform command
-             was successful or not
-    """
-    targets = kwargs.get('targets', [])
-    action = kwargs.get('action', None)
-    tf_action_index = 1  # The index to the terraform 'action'
-
-    var_files = {'conf/lambda.json', 'conf/global.json'}
-    tf_opts = ['-var-file=../{}'.format(x) for x in var_files]
-    tf_targets = ['-target={}'.format(x) for x in targets]
-    tf_command = ['terraform', 'plan'] + tf_opts + tf_targets
-    if action == 'destroy':
-        tf_command.append('-destroy')
-
-    LOGGER_CLI.info('Resolving Terraform modules')
-    if not run_command(['terraform', 'get'], quiet=True):
-        return False
-
-    LOGGER_CLI.info('Planning infrastructure')
-    if not run_command(tf_command):
-        return False
-
-    continue_prompt()
-
-    if action == 'destroy':
-        LOGGER_CLI.info('Destroying infrastructure')
-        tf_command[tf_action_index] = action
-        tf_command.remove('-destroy')
-        tf_command.append('-force')
-
-    elif action:
-        tf_command[tf_action_index] = action
-
-    else:
-        LOGGER_CLI.info('Creating infrastructure')
-        tf_command[tf_action_index] = 'apply'
-
-    if not run_command(tf_command):
-        return False
-
-    return True
-
-
-def status():
-    """Display current AWS infrastructure built by Terraform"""
-    for cluster, region in CONFIG['clusters'].iteritems():
-        print '\n======== {} ========'.format(cluster)
-        print 'Region: {}'.format(region)
-        print ('Alert Processor Lambda Settings: \n\tTimeout: {}\n\tMemory: {}'
-               '\n\tProd Version: {}').format(
-                   CONFIG['alert_processor_lambda_config'][cluster][0],
-                   CONFIG['alert_processor_lambda_config'][cluster][1],
-                   CONFIG['alert_processor_versions'][cluster])
-        print ('Rule Processor Lambda Settings: \n\tTimeout: {}\n\tMemory: {}'
-               '\n\tProd Version: {}').format(
-                   CONFIG['rule_processor_lambda_config'][cluster][0],
-                   CONFIG['rule_processor_lambda_config'][cluster][1],
-                   CONFIG['rule_processor_versions'][cluster])
-        print 'Kinesis settings: \n\tShards: {}\n\tRetention: {}'.format(
-            CONFIG['kinesis_streams_config'][cluster][0],
-            CONFIG['kinesis_streams_config'][cluster][1]
-        )
-
-    print '\nUser Access Keys:'
-    run_command(['terraform', 'output'])
-
-
-def rollback(options):
-    """Rollback the current production AWS Lambda version by 1
-
-    Notes:
-        Ignores if the production version is $LATEST
-        Only rollsback if published version is greater than 1
-    """
-    clusters = CONFIG.clusters()
-    if options.processor == 'all':
-        lambda_functions = {'rule_processor', 'alert_processor'}
-    else:
-        lambda_functions = {'{}_processor'.format(options.processor)}
-
-    for cluster in clusters:
-        for lambda_function in lambda_functions:
-            stream_alert_key = CONFIG['clusters'][cluster]['modules']['stream_alert']
-            current_vers = stream_alert_key[lambda_function]['current_version']
-            if current_vers != '$LATEST':
-                current_vers = int(current_vers)
-                if current_vers > 1:
-                    new_vers = current_vers - 1
-                    CONFIG['clusters'][cluster]['modules']['stream_alert'][lambda_function]['current_version'] = new_vers
-                    CONFIG.write()
-
-    targets = ['module.stream_alert_{}'.format(x)
-               for x in CONFIG.clusters()]
-
-    if not terraform_generate(config=CONFIG):
-        return
-
-    tf_runner(targets=targets)
-
-
-def deploy(options):
-    """Deploy new versions of both Lambda functions
-
-    Steps:
-    - build lambda deployment package
-    - upload to S3
-    - update variables.json with uploaded package hash/key
-    - publish latest version
-    - update variables.json with latest published version
-    - terraform apply
-    """
-    processor = options.processor
-    # terraform apply only to the module which contains our lambda functions
-    targets = ['module.stream_alert_{}'.format(x)
-               for x in CONFIG.clusters()]
-    packages = []
-
-    def publish_version(packages):
-        """Publish Lambda versions"""
-        for package in packages:
-            LambdaVersion(
-                config=CONFIG,
-                package=package
-            ).publish_function()
-
-    def deploy_rule_processor():
-        """Create Rule Processor package and publish versions"""
-        rule_package = RuleProcessorPackage(
-            config=CONFIG,
-            version=rule_processor_version
-        )
-        rule_package.create_and_upload()
-        return rule_package
-
-    def deploy_alert_processor():
-        """Create Alert Processor package and publish versions"""
-        alert_package = AlertProcessorPackage(
-            config=CONFIG,
-            version=alert_processor_version
-        )
-        alert_package.create_and_upload()
-        return alert_package
-
-    if processor == 'rule':
-        packages.append(deploy_rule_processor())
-
-    elif processor == 'alert':
-        packages.append(deploy_alert_processor())
-
-    elif processor == 'all':
-        packages.append(deploy_rule_processor())
-        packages.append(deploy_alert_processor())
-
-    # update the source code in $LATEST
-    if not tf_runner(targets=targets):
-        sys.exit(1)
-
-    # TODO(jack) write integration test to verify newly updated function
-
-    # create production version by running a second time
-    publish_version(packages)
-    # after the version is published and the config is written, generate the files
-    # to ensure the alias is properly updated
-    if not terraform_generate(config=CONFIG):
-        return
-    # apply the changes from publishing
-    tf_runner(targets=targets)
-
-
-def user_input(requested_info, mask, input_restrictions):
-    """Prompt user for requested information
+def configure_handler(options):
+    """Configure StreamAlert main settings
 
     Args:
-        requested_info [string]: Description of the information needed
-        mask [boolean]: Decides whether to mask input or not
-
-    Returns:
-        [string] response provided by the user
+        options (namedtuple): ArgParse command result
     """
-    response = ''
-    prompt = '\nPlease supply {}: '.format(requested_info)
+    if options.config_key == 'prefix':
+        CONFIG.set_prefix(options.config_value)
 
-    if not mask:
-        while not response:
-            response = raw_input(prompt)
-
-        # Restrict having spaces or colons in items (applies to things like
-        # descriptors, etc)
-        if any(x in input_restrictions for x in response):
-            LOGGER_CLI.error(
-                'the supplied input should not contain any of the following: %s',
-                '"{}"'.format(
-                    '", "'.join(input_restrictions)))
-            return user_input(requested_info, mask, input_restrictions)
-    else:
-        while not response:
-            response = getpass(prompt=prompt)
-
-    return response
+    elif options.config_key == 'aws_account_id':
+        CONFIG.set_aws_account_id(options.config_value)
 
 
 def configure_output(options):
     """Configure a new output for this service
 
     Args:
-        options [argparse]: Basically a namedtuple with the service setting
+        options (argparser): Basically a namedtuple with the service setting
     """
-    region = CONFIG['global']['account']['region']
-    prefix = CONFIG['global']['account']['prefix']
+    account_config = CONFIG['global']['account']
+    region = account_config['region']
+    prefix = account_config['prefix']
+    kms_key_alias = account_config['kms_key_alias']
+    # Verify that the word alias is not in the config.
+    # It is interpolated when the API call is made.
+    if 'alias/' in kms_key_alias:
+        kms_key_alias = kms_key_alias.split('/')[1]
 
     # Retrieve the proper service class to handle dispatching the alerts of this services
-    output = get_output_dispatcher(options.service,
-                                   region,
-                                   prefix,
-                                   config_outputs.load_outputs_config())
+    output = StreamAlertOutput.get_dispatcher(options.service)
 
     # If an output for this service has not been defined, the error is logged
     # prior to this
@@ -471,15 +132,15 @@ def configure_output(options):
     props = output.get_user_defined_properties()
 
     for name, prop in props.iteritems():
-        props[name] = prop._replace(value=user_input(prop.description,
-                                                     prop.mask_input,
-                                                     prop.input_restrictions))
+        # pylint: disable=protected-access
+        props[name] = prop._replace(
+            value=user_input(prop.description, prop.mask_input, prop.input_restrictions))
 
+    output_config = CONFIG['outputs']
     service = output.__service__
-    config = config_outputs.load_config(props, service)
-    # An empty config here means this configuration already exists,
-    # so we can ask for user input again for a unique configuration
-    if config is False:
+
+    # If it exists already, ask for user input again for a unique configuration
+    if config_outputs.output_exists(output_config, props, service):
         return configure_output(options)
 
     secrets_bucket = '{}.streamalert.secrets'.format(prefix)
@@ -487,17 +148,140 @@ def configure_output(options):
 
     # Encrypt the creds and push them to S3
     # then update the local output configuration with properties
-    if config_outputs.encrypt_and_push_creds_to_s3(
-            region, secrets_bucket, secrets_key, props):
-        updated_config = output.format_output_config(config, props)
-        config_outputs.update_outputs_config(config, updated_config, service)
+    if config_outputs.encrypt_and_push_creds_to_s3(region, secrets_bucket, secrets_key, props,
+                                                   kms_key_alias):
+        updated_config = output.format_output_config(output_config, props)
+        output_config[service] = updated_config
+        CONFIG.write()
 
-        LOGGER_CLI.info(
-            'Successfully saved \'%s\' output configuration for service \'%s\'',
-            props['descriptor'].value,
-            options.service)
+        LOGGER_CLI.info('Successfully saved \'%s\' output configuration for service \'%s\'',
+                        props['descriptor'].value, options.service)
     else:
         LOGGER_CLI.error('An error occurred while saving \'%s\' '
-                         'output configuration for service \'%s\'',
-                         props['descriptor'].value,
+                         'output configuration for service \'%s\'', props['descriptor'].value,
                          options.service)
+
+
+def _toggle_metrics(options):
+    """Enable or disable logging CloudWatch metrics
+
+    Args:
+        options (argparser): Contains boolean necessary for toggling metrics
+    """
+    CONFIG.toggle_metrics(options.enable_metrics, options.clusters, options.functions)
+
+
+def _create_alarm(options):
+    """Create a new CloudWatch alarm for the given metric
+
+    Args:
+        options (argparser): Contains all of the necessary info for configuring
+            a CloudWatch alarm
+    """
+    # Perform safety check for max total evaluation period. This logic cannot
+    # be performed by argparse so must be performed now.
+    seconds_in_day = 86400
+    if options.period * options.evaluation_periods > seconds_in_day:
+        LOGGER_CLI.error('The product of the value for period multiplied by the '
+                         'value for evaluation periods cannot exceed 86,400. 86,400 '
+                         'is the number of seconds in one day and an alarm\'s total '
+                         'current evaluation period can be no longer than one day.')
+        return
+
+    # Check to see if the user is specifying clusters when trying to create an
+    # alarm on an aggregate metric. Aggregate metrics encompass all clusters so
+    # specification of clusters doesn't have any real effect
+    if options.metric_target == 'aggregate' and options.clusters:
+        LOGGER_CLI.error('Specifying clusters when creating an alarm on an aggregate '
+                         'metric has no effect. Please remove the -c/--clusters flag.')
+        return
+
+    CONFIG.add_metric_alarm(vars(options))
+
+
+def _app_integration_handler(options):
+    """Perform app integration related functions
+
+    Args:
+        options (argparser): Contains all of the necessary info for configuring
+            a new app integration or updating an existing one
+    """
+    if not options:
+        return
+
+    # Convert the options to a dict
+    app_info = vars(options)
+
+    # Add the region and prefix for this StreamAlert instance to the app info
+    app_info['region'] = str(CONFIG['global']['account']['region'])
+    app_info['prefix'] = str(CONFIG['global']['account']['prefix'])
+
+    # Function name follows the format: '<prefix>_<cluster>_<service>_<app_name>_app
+    func_parts = ['prefix', 'cluster', 'type', 'app_name']
+
+    # Create a new app integration function
+    if options.subcommand == 'new':
+        app_info['function_name'] = '_'.join([app_info.get(value)
+                                              for value in func_parts] + ['app'])
+
+        CONFIG.add_app_integration(app_info)
+        return
+
+    # Update the auth information for an existing app integration function
+    if options.subcommand == 'update-auth':
+        cluster_config = CONFIG['clusters'][app_info['cluster']]
+        if not app_info['app_name'] in cluster_config['modules'].get('stream_alert_apps', {}):
+            LOGGER_CLI.error('App integration with name \'%s\' does not exist for cluster \'%s\'',
+                             app_info['app_name'], app_info['cluster'])
+            return
+
+        # Get the type for this app integration from the current
+        # config so we can update it properly
+        app_info['type'] = cluster_config['modules']['stream_alert_apps'] \
+                                         [app_info['app_name']]['type']
+
+        app_info['function_name'] = '_'.join([app_info.get(value)
+                                              for value in func_parts] + ['app'])
+
+        app = StreamAlertApp.get_app(app_info, False)
+
+        if not save_app_auth_info(app, app_info, True):
+            return
+
+        return
+
+    # List all of the available app integrations, broken down by cluster
+    if options.subcommand == 'list':
+        all_info = {
+            cluster: cluster_config['modules'].get('stream_alert_apps')
+            for cluster, cluster_config in CONFIG['clusters'].iteritems()
+        }
+
+        for cluster, info in all_info.iteritems():
+            print '\nCluster: {}\n'.format(cluster)
+            if not info:
+                print '\tNo Apps configured\n'
+                continue
+
+            for name, details in info.iteritems():
+                print '\tName: {}'.format(name)
+                print '\n'.join([
+                    '\t\t{key}:{padding_char:<{padding_count}}{value}'.format(
+                        key=key_name,
+                        padding_char=' ',
+                        padding_count=30 - (len(key_name)),
+                        value=value) for key_name, value in details.iteritems()
+                ] + ['\n'])
+
+def _threat_intel_handler(options, config):
+    """Configure Threat Intel from command line
+
+    Args:
+        options (namedtuple): The parsed args passed from the CLI
+        config (CLIConfig): Loaded StreamAlert CLI
+    """
+    if not options:
+        return
+
+    if options.subcommand == 'enable':
+        config.add_threat_intel(vars(options))

@@ -3,17 +3,7 @@ variable "account" {
   default = {}
 }
 
-variable "alert_processor_config" {
-  type    = "map"
-  default = {}
-}
-
-variable "alert_processor_lambda_config" {
-  type    = "map"
-  default = {}
-}
-
-variable "alert_processor_versions" {
+variable "stream_alert_apps_config" {
   type    = "map"
   default = {}
 }

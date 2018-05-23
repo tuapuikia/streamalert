@@ -1,13 +1,13 @@
 Datasources
 ===========
 
-StreamAlert supports the following services as primary datasources:
+StreamAlert supports the following services as datasources:
 
 * Amazon S3
 * AWS Kinesis Streams
 * AWS SNS
 
-The services above can accept data from:
+These services above can accept data from:
 
 * Log Forwarding Agents
 * Custom Applications
@@ -33,7 +33,7 @@ Example non-AWS use-cases:
 * Host logs (syslog, auditd, osquery, ...)
 * Network logs (Palo Alto Networks, Cisco, ...)
 * Web Application logs (Apache, nginx, ...)
-* SaaS logs (Box, OneLogin, …)
+* SaaS logs (Box, GSuite, OneLogin, ...)
 
 AWS Kinesis Streams
 -------------------

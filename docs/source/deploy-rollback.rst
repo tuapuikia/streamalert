@@ -1,15 +1,15 @@
 Rollback
 ========
 
-When production AWS Lambda functions are published, they become immutable.  If for some reason a published ``production`` version is throwing errors or contains invalid configurations, the ``stream_alert_cli`` provides a command to rollback to the previous version.
+When production AWS Lambda functions are published, they become immutable.
 
-.. note:: Rollback is only possible for the main StreamAlert AWS Lambda function, aliased as 'alert'.  The current version must also not be '$LATEST' and must be greater than 1.
+If a published production version is throwing errors, the CLI includes a command to rollback to the previous version.
 
 To initiate a rollback for a specific Lambda function:
 
-``$ ./stream_alert_cli.py lambda rollback --processor rule``
-``$ ./stream_alert_cli.py lambda rollback --processor alert``
+``$ ./manage.py lambda rollback --processor rule``
+``$ ./manage.py lambda rollback --processor alert``
 
 To initiate a rollback for all functions:
 
-``$ ./stream_alert_cli.py lambda rollback --processor all``
+``$ ./manage.py lambda rollback --processor all``

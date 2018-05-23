@@ -1,5 +1,5 @@
 Overview
-=======================================
+========
 
 StreamAlert is a serverless, realtime data analysis framework which empowers you to ingest, analyze, and alert on data from any environment, using datasources and alerting logic you define.
 
@@ -16,7 +16,6 @@ At a high-level:
 
 Other Links:
 
-* `Twitter <https://twitter.com/streamalert_io>`_ (unofficial)
 * `Slack <https://streamalert.herokuapp.com>`_ (unofficial)
 
 .. note:: Docs are under construction, don't mind the dust!

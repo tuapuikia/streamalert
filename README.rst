@@ -2,10 +2,12 @@ StreamAlert - Serverless, Realtime Data Analysis Framework
 ==========================================================
 
 .. image:: https://travis-ci.org/airbnb/streamalert.svg?branch=master
-    :target: https://travis-ci.org/airbnb/streamalert
+  :target: https://travis-ci.org/airbnb/streamalert
 
 .. image:: https://coveralls.io/repos/github/airbnb/streamalert/badge.svg?branch=master
-    :target: https://coveralls.io/github/airbnb/streamalert?branch=master
+  :target: https://coveralls.io/github/airbnb/streamalert?branch=master
+
+.. image:: docs/images/sa-banner.png
 
 StreamAlert is a serverless, realtime data analysis framework which empowers you to ingest, analyze, and alert on data from any environment, using datasources and alerting logic you define.
 
@@ -26,5 +28,4 @@ Links
 
 * `Announcement Post <https://medium.com/@airbnbeng/e8619e3e5043>`_
 * `User Guide <https://streamalert.readthedocs.io/>`_
-* `Twitter <https://twitter.com/streamalert_io>`_ (unofficial)
 * `Slack <https://streamalert.herokuapp.com/>`_ (unofficial)

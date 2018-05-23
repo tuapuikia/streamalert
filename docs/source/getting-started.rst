@@ -12,15 +12,15 @@ Dependencies
 
 .. code-block:: bash
 
-  $ git clone https://github.com/airbnb/streamalert.git
-  $ cd streamalert
+  $ git clone --branch stable https://github.com/airbnb/streamalert.git
 
 4. Install and activate Virtualenv:
 
 .. code-block:: bash
 
-  $ pip install virtualenv
-  $ virtualenv venv
+  $ cd streamalert
+  $ pip install --user virtualenv
+  $ virtualenv -p python2.7 venv
   $ source venv/bin/activate
 
 5. Install dependencies:
@@ -28,6 +28,9 @@ Dependencies
 .. code-block:: bash
 
   $ pip install -r requirements.txt
+
+
+.. note:: If you run into issues with ``psutil`` installation, make sure you have the ``python-dev`` dependencies installed.  `debian: sudo apt install python-dev``, `CentOS/RHEL: sudo yum install python-devel``
 
 
 Quick Start

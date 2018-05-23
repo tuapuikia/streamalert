@@ -10,9 +10,14 @@ Out of the box, StreamAlert supports:
 
 * **AWS Lambda**
 * **AWS S3**
+* **AWS SNS**
+* **AWS SQS**
+* **Komand**
 * **PagerDuty**
 * **Phantom**
 * **Slack**
+* **Jira**
+* **Github**
 
 StreamAlert can be extended to support any API. Creating a new output to send alerts to is easily accomplished through inheritance from the ``StreamOutputBase`` class. More on that in the `Adding Support for New Services`_ section below.
 
@@ -26,18 +31,18 @@ Credentials are never cached on disk in a decrypted state.
 Configuration
 -------------
 
-Adding a new configuration for a currently supported service is handled using ``stream_alert_cli.py``:
+Adding a new configuration for a currently supported service is handled using ``manage.py``:
 
- - ``python stream_alert_cli.py output new --service <SERVICE_NAME>``
-    - ``<SERVICE_NAME>`` above should be one of the following supported service identifiers: ``aws-lambda``, ``aws-s3``, ``pagerduty``, ``phantom``, or ``slack``
+ - ``python manage.py output new --service <SERVICE_NAME>``
+    - ``<SERVICE_NAME>`` above should be one of the following supported service identifiers: ``aws-lambda``, ``aws-s3``, ``komand``, ``pagerduty``, ``phantom``, or ``slack``
 
 For example:
- - ``python stream_alert_cli.py output new --service slack``
+ - ``python manage.py output new --service slack``
 
-.. Note:: If this is the first time you have configured new outputs via the cli, you may see this error for certain services:
- `An error occurred while sending credentials to S3 for key [<SERVICE>/<KEY>]: The specified bucket does not exist [<PREFIX>.streamalert.secrets]`.
+.. note:: If this is the first time you have configured new outputs via the cli, you may see this error for certain services:
+ `An error occurred while sending credentials to S3 for key '<SERVICE>/<KEY>' in bucket '<PREFIX>.streamalert.secrets': The specified bucket does not exist`.
  If you encounter this error, first make sure you've followed the `Quick Start <getting-started.html#quick-start>`_ steps.
- If you've already configured StreamAlert in the past, you may just have to run `python stream_alert_cli.py terraform build`.
+ If you've already configured StreamAlert in the past, you may just have to run `python manage.py terraform build`.
  This ensures the S3 bucket used for storing encrypted secrets is created and only needs to be run once.
 
 The above command will then prompt the user for a ``descriptor`` to use for this configuration::
@@ -48,7 +53,7 @@ After a ``descriptor`` is provided, the user is then prompted for the Slack webh
 
  Please supply the full Slack webhook url, including the secret:
 
-.. Note:: The user input for the Slack webhook URL will be masked. This 'masking' approach currently applies to any potentially sensitive information the user may have to enter on the cli and can be enforced through any new services that are implemented.
+.. note:: The user input for the Slack webhook URL will be masked. This 'masking' approach currently applies to any potentially sensitive information the user may have to enter on the cli and can be enforced through any new services that are implemented.
 
 Adding Support for New Services
 -------------------------------
@@ -77,13 +82,13 @@ Adding support for a new service involves five steps:
                                     '(ie: name of integration/channel/service/etc)'))
     ])
 
-  def dispatch(self, **kwargs):
+  def _dispatch(self, **kwargs):
     """Handles the actual sending of alerts to the configured service.
     Any external API calls for this service should be added here.
-    This method should call the `_log_status()` base class method upon completion.
+    This method should return a boolean where True means the alert was successfully sent.
     """
     ...
-    self._log_status(boolean)
+    return True
 
 **Note**: The ``OutputProperty`` object used in ``get_user_defined_properties`` is a namedtuple consisting of a few properties:
 
@@ -110,14 +115,15 @@ Adding support for a new service involves five steps:
 
    - This should be a string value that corresponds to an identifier that best represents this service. (ie: ``__service__ = 'aws-s3'``)
 
-4. Add the ``@output`` class decorator to the new subclass so it registered when the `outputs` module is loaded.
+4. Add the ``@StreamAlertOutput`` class decorator to the new subclass so it registered when the `outputs` module is loaded.
 
-5. To allow the cli to configure a new integration for this service, add the value used above for the ``__service__`` property to the ``stream_alert_cli.py`` file.
+5. To allow the cli to configure a new integration for this service, add the value used above for the ``__service__`` property to the ``manage.py`` file.
 
    - The ``output_parser`` contains a ``choices`` list for ``--service`` that must include this new service.
 
+6. Extend the ``AlertProcessorTester.setup_outputs`` method in ``stream_alert_cli/test.py`` module to provide mock credentials for your new output.
 
-.. Note:: New AWS Service outputs should subclass ``AWSOutput`` instead of ``StreamOutputBase``
+.. note:: New AWS Service outputs should subclass ``AWSOutput`` instead of ``StreamOutputBase``
 
 Strategy
 --------

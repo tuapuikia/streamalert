@@ -1,18 +1,16 @@
-.. streamalert documentation master file, created by
-   sphinx-quickstart on Mon Jan 23 21:19:26 2017.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
-
 StreamAlert
-=======================================
+===========
 
-.. image:: ../images/high-level-overview.png
+.. image:: ../images/sa-banner.png
+  :align: center
+  :alt: StreamAlert
 
 StreamAlert is a serverless, realtime data analysis framework which empowers you to ingest, analyze, and alert on data from any environment, using datasources and alerting logic you define.
 
 For more details, see our `announcement post <https://medium.com/@airbnbeng/e8619e3e5043>`_.
 
-At a high-level:
+At a high-level
+---------------
 
 * Deployment is automated: simple, safe and repeatable for any AWS account
 * Easily scalable from megabytes to terabytes per day
@@ -23,17 +21,27 @@ At a high-level:
 * Supports different types of data (Ex: JSON, CSV, Key-Value, and Syslog)
 * Supports different use-cases like security, infrastructure, compliance and more
 
-Other Links:
+Components
+----------
+
+.. figure:: ../images/sa-high-level-arch.png
+  :alt: StreamAlert High Level Architecture
+  :align: center
+  :target: _images/sa-high-level-arch.png
+
+  (Click figure to enlarge)
+
+Other Links
+-----------
 
 * `Github <https://github.com/airbnb/streamalert>`_
-* `Twitter (unofficial) <https://twitter.com/streamalert_io>`_
 * `Slack (unofficial) <https://streamalert.herokuapp.com>`_
 
 .. note:: Docs are under construction, don't mind the dust!
 
 
 Table of Contents
-=======================================
+=================
 
 .. _introduction:
 
@@ -68,6 +76,7 @@ Table of Contents
    datasources
    conf-datasources
    conf-schemas
+   conf-schemas-examples
 
 .. _infra_configuration:
 
@@ -94,3 +103,21 @@ Table of Contents
    report-bugs-features
    questions
 
+.. _historical_search:
+
+.. toctree::
+  :maxdepth: 2
+  :caption: Historical Search
+
+  athena-overview
+  athena-arch
+  athena-user-guide
+  firehose
+
+.. toctree::
+  :maxdepth: 2
+  :caption: StreamAlert Apps
+
+  app-configuration
+  app-auth-update
+  app-development
